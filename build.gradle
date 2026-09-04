@@ -1,5 +1,6 @@
 plugins {
     id 'java-library'
+    id 'groovy'
     id 'application'
 }
 
@@ -8,7 +9,8 @@ version = '0.1.0-SNAPSHOT'
 
 ext {
     imagingNitfVersion = '0.10'
-    junitVersion = '5.10.3'
+    spockVersion = '2.4-groovy-4.0'
+    junitPlatformVersion = '1.14.1'
 }
 
 repositories {
@@ -36,9 +38,8 @@ dependencies {
     // Released, unmodified upstream artifacts.
     api "org.codice.imaging.nitf:codice-imaging-nitf-fluent:${imagingNitfVersion}"
 
-    testImplementation platform("org.junit:junit-bom:${junitVersion}")
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation "org.spockframework:spock-core:${spockVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
 }
 
 application {
@@ -48,6 +49,10 @@ application {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 11
+}
+
+tasks.withType(GroovyCompile).configureEach {
+    groovyOptions.encoding = 'UTF-8'
 }
 
 tasks.named('test') {

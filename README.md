@@ -53,6 +53,10 @@ dependencies {
 The build uses Gradle's Groovy DSL. Maven remains available as a compatibility
 build, so `mvn test` exercises the same source and test trees.
 
+Tests are written as [Spock](https://spockframework.org/) specifications under
+`src/test/groovy`. Groovy remains test-scoped; the published library and its
+runtime dependencies are still Java-only.
+
 ## Inspect a file
 
 ```bash
