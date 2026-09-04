@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: $0 /path/to/file.ntf" >&2
+  exit 2
+fi
+
+mvn -q -f "$ROOT_DIR/pom.xml" package dependency:build-classpath \
+  -Dmdep.outputFile="$ROOT_DIR/target/runtime-classpath" \
+  -Dmdep.includeScope=runtime
+
+exec java -cp "$ROOT_DIR/target/classes:$(<"$ROOT_DIR/target/runtime-classpath")" \
+  org.codice.imaging.nitf.nei.NeiInfo "$1"
+
