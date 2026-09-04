@@ -8,10 +8,4 @@ if [[ $# -ne 1 ]]; then
   exit 2
 fi
 
-mvn -q -f "$ROOT_DIR/pom.xml" package dependency:build-classpath \
-  -Dmdep.outputFile="$ROOT_DIR/target/runtime-classpath" \
-  -Dmdep.includeScope=runtime
-
-exec java -cp "$ROOT_DIR/target/classes:$(<"$ROOT_DIR/target/runtime-classpath")" \
-  org.codice.imaging.nitf.nei.NeiInfo "$1"
-
+exec "$ROOT_DIR/gradlew" -q run --args="$1"

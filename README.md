@@ -31,30 +31,38 @@ to depend on Codice's internal TRE implementation.
 ## Prerequisites
 
 - JDK 11 or newer
-- Maven 3.8 or newer
+- The included Gradle wrapper (no system Gradle installation required)
 - Access to `https://repo.codice.org/repository/maven-releases/` on the first
-  build (the repository is already declared in `pom.xml`)
+  build (the repository is already declared in `build.gradle`)
 
 ## Build and test
 
 ```bash
-mvn test
+./gradlew build
+./gradlew test
 ```
 
 The dependency is intentionally pinned to the stock vendor release:
 
-```xml
-<dependency>
-  <groupId>org.codice.imaging.nitf</groupId>
-  <artifactId>codice-imaging-nitf-fluent</artifactId>
-  <version>0.10</version>
-</dependency>
+```groovy
+dependencies {
+    api 'org.codice.imaging.nitf:codice-imaging-nitf-fluent:0.10'
+}
 ```
+
+The build uses Gradle's Groovy DSL. Maven remains available as a compatibility
+build, so `mvn test` exercises the same source and test trees.
 
 ## Inspect a file
 
 ```bash
 ./tools/neiinfo /path/to/product.ntf
+```
+
+The equivalent direct Gradle command is:
+
+```bash
+./gradlew run --args="/path/to/product.ntf"
 ```
 
 For example:
@@ -134,4 +142,3 @@ the general-purpose vendor library.
   orientation fields; available samples currently exercise DES version 1.
 - Association is exposed through `CSEXRB` UUID fields but this project does not
   impose an application-specific object graph.
-

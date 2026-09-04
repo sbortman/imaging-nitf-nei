@@ -1,0 +1,61 @@
+plugins {
+    id 'java-library'
+    id 'application'
+}
+
+group = 'org.codice.imaging.nitf'
+version = '0.1.0-SNAPSHOT'
+
+ext {
+    imagingNitfVersion = '0.10'
+    junitVersion = '5.10.3'
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'codiceReleases'
+        url = uri('https://repo.codice.org/repository/maven-releases/')
+        mavenContent {
+            releasesOnly()
+        }
+    }
+    maven {
+        name = 'codicePublic'
+        url = uri('https://repo.codice.org/repository/maven-public/')
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+    withSourcesJar()
+}
+
+dependencies {
+    // Released, unmodified upstream artifacts.
+    api "org.codice.imaging.nitf:codice-imaging-nitf-fluent:${imagingNitfVersion}"
+
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'org.codice.imaging.nitf.nei.NeiInfo'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 11
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.named('jar') {
+    manifest {
+        attributes('Automatic-Module-Name': 'org.codice.imaging.nitf.nei')
+    }
+}
