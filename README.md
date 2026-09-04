@@ -57,6 +57,7 @@ build, so `mvn test` exercises the same source and test trees.
 
 ```bash
 ./tools/neiinfo /path/to/product.ntf
+./tools/neiinfo /path/to/product.ntf --json
 ```
 
 The equivalent direct Gradle command is:
@@ -64,6 +65,13 @@ The equivalent direct Gradle command is:
 ```bash
 ./gradlew run --args="/path/to/product.ntf"
 ```
+
+Options match the relevant subset of the original `nitfinfo` tool:
+
+- `--json` emits machine-readable JSON.
+- `--no-tres` omits image TRE records while retaining GLAS/GFM DES records.
+- `--no-color` is accepted for compatibility; this tool's text output is
+  already uncoloured.
 
 For example:
 

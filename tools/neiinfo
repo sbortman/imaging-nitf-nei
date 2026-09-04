@@ -3,9 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 /path/to/file.ntf" >&2
+if [[ $# -lt 1 ]]; then
+  echo "usage: $0 <file.ntf> [--json] [--no-tres] [--no-color]" >&2
   exit 2
 fi
 
-exec "$ROOT_DIR/gradlew" -q run --args="$1"
+"$ROOT_DIR/gradlew" -q installDist
+exec "$ROOT_DIR/build/install/imaging-nitf-nei/bin/imaging-nitf-nei" "$@"
