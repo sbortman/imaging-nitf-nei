@@ -42,8 +42,29 @@ dependencies {
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
 }
 
+/*
+ * Two command-line entry points share one distribution. The application plugin
+ * generates a start script only for `mainClass`, so neivalidator gets its own
+ * CreateStartScripts task and is copied into the distribution's bin directory.
+ * The classpath is declared lazily from the jar plus runtimeClasspath so the
+ * generated script resolves lib/ the same way the primary one does.
+ */
+def neivalidatorStartScripts = tasks.register('neivalidatorStartScripts', CreateStartScripts) {
+    mainClass = 'com.vantor.nitf.nei.NeiValidate'
+    applicationName = 'neivalidator'
+    outputDir = layout.buildDirectory.dir('neivalidator-scripts').get().asFile
+    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+}
+
 application {
     mainClass = 'com.vantor.nitf.nei.NeiInfo'
+
+    applicationDistribution.from(neivalidatorStartScripts) {
+        into 'bin'
+        filePermissions {
+            unix(0755)
+        }
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {

@@ -108,6 +108,50 @@ The tool skips image pixels, parses image TRE headers, extracts DES payloads,
 and prints each NEI field. An SLF4J “no binding” warning is harmless unless the
 calling application wants logging; this project does not force a logging backend.
 
+## neivalidator
+
+`neiinfo` prints what a product says. `neivalidator` says what is wrong with it.
+
+```bash
+./tools/neivalidator /path/to/product.ntf
+./tools/neivalidator /path/to/*.ntf --errors-only
+./tools/neivalidator /path/to/product.ntf --json
+```
+
+It is deliberately **self-contained**: no level1a XML, no focused sidecar, no
+vendor reconstruction. That is what lets it run on any product, including one
+whose sources are long gone. The trade-off is what it can therefore check:
+
+- **conformance** -- fields a standard requires but the file leaves blank
+  (`OSTAID`, `FSCLAS`/`ISCLAS`/`DESCLAS`, `FSCLSY`, `IDATIM`);
+- **internal consistency** -- two places in the same file that must agree
+  (`CSEXRB.NUM_LINES`/`NUM_SAMPLES` against `NROWS`/`NCOLS`, `BANDSB.COUNT`
+  and `CSSFAB.N_BANDS` against the image's own band count, the block grid
+  against the declared size, `ICORDS` declaring a system while `IGEOLO` is
+  blank);
+- **layout** -- a TRE or DES whose parse stops short of its payload.
+
+It cannot check whether a *populated* value is the *correct* value. Comparing
+against sources is a different job, and `nei-test-suite`'s
+`verify_nitf_metadata.py` already does it.
+
+Options:
+
+- `--json` emits one machine-readable document for all files given.
+- `--errors-only` suppresses WARN and INFO.
+- `--quiet` prints only the per-file counts and the by-code summary.
+- `--no-color` is accepted for compatibility; output is already uncoloured.
+
+Exit status is `0` when no ERROR was raised, `1` when one was, `2` on a usage
+problem and `3` when a file could not be read. WARN and INFO never fail a run,
+so this is usable in a build without having to pin every legal-but-odd field.
+
+Findings carry a stable code (`CSEXRB-NUM-LINES`, `IMG-ICORDS-WITHOUT-IGEOLO`),
+so a rule can be tracked or suppressed downstream without matching on prose.
+Anything reported as a defect always states both what was found and what was
+expected; a check that cannot state both is emitted as INFO rather than
+asserting something it cannot substantiate.
+
 ## Library use
 
 Scan a complete NITF with stock imaging-nitf:
