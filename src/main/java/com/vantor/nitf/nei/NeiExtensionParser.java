@@ -1,4 +1,4 @@
-package org.codice.imaging.nitf.nei;
+package com.vantor.nitf.nei;
 
 import java.util.Arrays;
 import java.util.Collections;

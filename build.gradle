@@ -4,7 +4,7 @@ plugins {
     id 'application'
 }
 
-group = 'org.codice.imaging.nitf'
+group = 'com.vantor.nitf'
 version = '0.1.0-SNAPSHOT'
 
 ext {
@@ -43,7 +43,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'org.codice.imaging.nitf.nei.NeiInfo'
+    mainClass = 'com.vantor.nitf.nei.NeiInfo'
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -55,12 +55,35 @@ tasks.withType(GroovyCompile).configureEach {
     groovyOptions.encoding = 'UTF-8'
 }
 
+/*
+ * NeiSampleSpec runs against real vendor products, which are deliberately not
+ * committed here. Point the build at a directory of them with either:
+ *
+ *     ./gradlew test -PneiSamplesDir=/path/to/nei-samples
+ *     NEI_SAMPLES_DIR=/path/to/nei-samples ./gradlew test
+ *
+ * With neither set, those features skip rather than fail. Add -PneiRegolden to
+ * rewrite the golden summaries instead of comparing against them.
+ */
 tasks.named('test') {
     useJUnitPlatform()
+
+    def samplesDir = findProperty('neiSamplesDir') ?: System.getenv('NEI_SAMPLES_DIR')
+    if (samplesDir) {
+        systemProperty 'nei.samples.dir', samplesDir as String
+    }
+    if (findProperty('neiRegolden') != null) {
+        systemProperty 'nei.regolden', 'true'
+    }
+
+    testLogging {
+        events 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
 }
 
 tasks.named('jar') {
     manifest {
-        attributes('Automatic-Module-Name': 'org.codice.imaging.nitf.nei')
+        attributes('Automatic-Module-Name': 'com.vantor.nitf.nei')
     }
 }

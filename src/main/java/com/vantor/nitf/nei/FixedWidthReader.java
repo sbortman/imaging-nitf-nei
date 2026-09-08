@@ -1,4 +1,4 @@
-package org.codice.imaging.nitf.nei;
+package com.vantor.nitf.nei;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;

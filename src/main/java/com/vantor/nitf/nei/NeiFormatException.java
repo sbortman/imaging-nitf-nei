@@ -1,4 +1,4 @@
-package org.codice.imaging.nitf.nei;
+package com.vantor.nitf.nei;
 
 /** Indicates that an NEI extension payload does not match its fixed-width layout. */
 public class NeiFormatException extends RuntimeException {

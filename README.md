@@ -3,6 +3,10 @@
 An alternate implementation of Non-Earth Imaging (NEI) and GLAS/GFM extension
 support that uses the released, unmodified Codice `imaging-nitf` 0.10 jars.
 
+It is published under its own coordinates, `com.vantor.nitf:imaging-nitf-nei`,
+in the `com.vantor.nitf.nei` package. Nothing here occupies an upstream
+namespace.
+
 This project deliberately does not patch or replace `codice-imaging-nitf-core`.
 The stock parser reads the NITF container and preserves unknown TRE bytes; this
 jar decodes those bytes and reads GLAS/GFM DES payloads through the public
@@ -50,12 +54,28 @@ dependencies {
 }
 ```
 
-The build uses Gradle's Groovy DSL. Maven remains available as a compatibility
-build, so `mvn test` exercises the same source and test trees.
+Gradle's Groovy DSL is the only build. Tests are [Spock](https://spockframework.org/)
+specifications under `src/test/groovy`. Groovy stays test-scoped; the published
+library and its runtime dependencies are still Java-only.
 
-Tests are written as [Spock](https://spockframework.org/) specifications under
-`src/test/groovy`. Groovy remains test-scoped; the published library and its
-runtime dependencies are still Java-only.
+### Testing against real products
+
+`NeiSampleSpec` scans actual NITF files through the stock jars, exactly as an
+application would. Those files are commercial imagery and are **not** committed
+here, so the build is pointed at them from outside:
+
+```bash
+./gradlew test -PneiSamplesDir=/path/to/nei-samples
+NEI_SAMPLES_DIR=/path/to/nei-samples ./gradlew test
+```
+
+With neither set, those features skip and the rest of the suite still runs.
+
+The first run beside a sample writes a golden summary next to it
+(`product.ntf` produces `product.ntf.nei.txt`) and later runs compare against
+it, so a change in what the parser decodes shows up as a diff. The summaries
+land in the sample directory, not in this repository, and carry no absolute
+paths or timestamps. Rewrite them deliberately with `-PneiRegolden`.
 
 ## Inspect a file
 

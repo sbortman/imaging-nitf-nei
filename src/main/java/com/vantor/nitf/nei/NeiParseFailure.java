@@ -1,4 +1,4 @@
-package org.codice.imaging.nitf.nei;
+package com.vantor.nitf.nei;
 
 /** A supported extension that was present but did not match the expected layout. */
 public final class NeiParseFailure {

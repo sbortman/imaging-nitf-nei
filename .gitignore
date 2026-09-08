@@ -1,5 +1,8 @@
-target/
 .gradle/
 build/
 .idea/
 *.iml
+
+# Golden summaries live beside the samples, but guard against a
+# neiSamplesDir that points inside this repository.
+*.nei.txt
