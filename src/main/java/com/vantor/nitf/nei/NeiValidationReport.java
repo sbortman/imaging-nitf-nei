@@ -34,9 +34,16 @@ public final class NeiValidationReport {
 
     /** Findings grouped by rule code, for a summary that does not repeat itself. */
     public Map<String, Integer> byCode() {
+        return byCode(null);
+    }
+
+    /** As {@link #byCode()}, restricted to one severity; {@code null} means all. */
+    public Map<String, Integer> byCode(final NeiFinding.Severity severity) {
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (NeiFinding finding : findings) {
-            counts.merge(finding.getCode(), 1, Integer::sum);
+            if (severity == null || finding.getSeverity() == severity) {
+                counts.merge(finding.getCode(), 1, Integer::sum);
+            }
         }
         return counts;
     }

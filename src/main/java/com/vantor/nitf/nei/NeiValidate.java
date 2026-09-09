@@ -95,9 +95,6 @@ public final class NeiValidate {
                 if (errorsOnly && finding.getSeverity() != NeiFinding.Severity.ERROR) {
                     continue;
                 }
-                if (finding.getSeverity() == NeiFinding.Severity.INFO && errorsOnly) {
-                    continue;
-                }
                 System.out.printf("  %-5s %-28s %-16s %s%n",
                         finding.getSeverity(), finding.getCode(), finding.getLocation(),
                         detail(finding));
@@ -105,7 +102,9 @@ public final class NeiValidate {
         }
         if (errors + warnings > 0) {
             System.out.println("  --");
-            for (Map.Entry<String, Integer> entry : report.byCode().entrySet()) {
+            Map<String, Integer> summary = errorsOnly
+                    ? report.byCode(NeiFinding.Severity.ERROR) : report.byCode();
+            for (Map.Entry<String, Integer> entry : summary.entrySet()) {
                 System.out.printf("  %4d  %s%n", entry.getValue(), entry.getKey());
             }
         }

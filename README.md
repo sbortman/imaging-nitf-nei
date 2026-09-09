@@ -123,7 +123,11 @@ vendor reconstruction. That is what lets it run on any product, including one
 whose sources are long gone. The trade-off is what it can therefore check:
 
 - **conformance** -- fields a standard requires but the file leaves blank
-  (`OSTAID`, `FSCLAS`/`ISCLAS`/`DESCLAS`, `FSCLSY`, `IDATIM`);
+  (`OSTAID`, `FSCLAS`/`ISCLAS`/`DESCLAS`, `FDT`);
+- **NEI profile** -- legal under MIL-STD-2500C but wrong for an NEI product:
+  `IDATIM` filled with hyphens while the ephemeris DES carry a real epoch, and a
+  blank `FSCLSY`/`ISCLSY` on an unclassified segment (WARN; ERROR only when the
+  segment is classified);
 - **internal consistency** -- two places in the same file that must agree
   (`CSEXRB.NUM_LINES`/`NUM_SAMPLES` against `NROWS`/`NCOLS`, `BANDSB.COUNT`
   and `CSSFAB.N_BANDS` against the image's own band count, the block grid
@@ -138,7 +142,7 @@ against sources is a different job, and `nei-test-suite`'s
 Options:
 
 - `--json` emits one machine-readable document for all files given.
-- `--errors-only` suppresses WARN and INFO.
+- `--errors-only` suppresses WARN and INFO, in both the findings and the by-code summary.
 - `--quiet` prints only the per-file counts and the by-code summary.
 - `--no-color` is accepted for compatibility; output is already uncoloured.
 
