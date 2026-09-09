@@ -74,6 +74,10 @@ class NeiValidatorSpec extends Specification {
         report.count(NeiFinding.Severity.INFO) == 1
         report.hasErrors()
         report.byCode() == ['E-ONE': 2, 'W-ONE': 1, 'I-ONE': 1]
+
+        and: 'the summary can be narrowed to one severity, as --errors-only needs'
+        report.byCode(NeiFinding.Severity.ERROR) == ['E-ONE': 2]
+        report.byCode(NeiFinding.Severity.INFO) == ['I-ONE': 1]
     }
 
     def 'a report with no errors does not fail a run'() {

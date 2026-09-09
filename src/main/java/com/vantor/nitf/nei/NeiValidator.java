@@ -84,7 +84,7 @@ public final class NeiValidator {
         NeiValidationReport report = new NeiValidationReport();
         List<ImageFacts> images = new ArrayList<>();
         List<String> desIds = new ArrayList<>();
-        List<NeiRecord> desRecords = new ArrayList<>();
+        Map<NeiRecord, String> desRecords = new LinkedHashMap<>();
         AtomicInteger imageIndex = new AtomicInteger();
         AtomicInteger desIndex = new AtomicInteger();
 
@@ -123,7 +123,7 @@ public final class NeiValidator {
         String ostaid = trim(header.getOriginatingStationId());
         if (ostaid.isEmpty()) {
             report.add(NeiFinding.error("HDR-OSTAID-BLANK", where, "OSTAID", ostaid,
-                    "'" + EXPECTED_OSTAID + "'",
+                    "a station identifier, e.g. '" + EXPECTED_OSTAID + "'",
                     "MIL-STD-2500C requires an originating station; consumers use it for provenance"));
         }
         SecurityMetadata security = header.getFileSecurityMetadata();
@@ -190,7 +190,8 @@ public final class NeiValidator {
         if (facts.dateTime.isEmpty() || isPlaceholder(facts.dateTime)) {
             report.add(NeiFinding.error("IMG-IDATIM-INVALID", where, "IDATIM", facts.dateTime,
                     "CCYYMMDDhhmmss",
-                    "acquisition time is a placeholder, yet the ephemeris DES carry real epochs"));
+                    "legal under MIL-STD-2500C, but an NEI product is expected to state its "
+                            + "acquisition time here"));
         }
         if (facts.security != null) {
             checkClassification(report, where, "ISCLAS", "ISCLSY", facts.security,
@@ -207,10 +208,11 @@ public final class NeiValidator {
             }
         }
         report.add(NeiFinding.info("IMG-SUMMARY", where, "",
-                facts.rows + "x" + facts.cols + " x" + facts.numBands + "band "
-                        + facts.compression,
-                "blocks " + facts.blocksPerRow + "x" + facts.blocksPerColumn + " of "
-                        + facts.pixelsPerBlockH + "x" + facts.pixelsPerBlockV));
+                "NROWS " + facts.rows + " x NCOLS " + facts.cols + ", " + facts.numBands
+                        + " band(s), " + facts.compression,
+                "NBPC " + facts.blocksPerColumn + " x NBPR " + facts.blocksPerRow
+                        + " blocks of NPPBV " + facts.pixelsPerBlockV + " x NPPBH "
+                        + facts.pixelsPerBlockH));
     }
 
     /**
@@ -294,13 +296,15 @@ public final class NeiValidator {
      * the ambiguity rather than guessing which image a DES describes.
      */
     private void crossCheckDesAgainstImages(final NeiValidationReport report,
-            final List<ImageFacts> images, final List<NeiRecord> desRecords) {
-        for (NeiRecord record : desRecords) {
+            final List<ImageFacts> images, final Map<NeiRecord, String> desRecords) {
+        for (Map.Entry<NeiRecord, String> entry : desRecords.entrySet()) {
+            NeiRecord record = entry.getKey();
+            String desWhere = entry.getValue();
             if (!"CSSFAB".equals(record.getType())) {
                 continue;
             }
             if (record.getFields().containsKey("VENDOR_PREAMBLE")) {
-                report.add(NeiFinding.warn("CSSFAB-VENDOR-PREAMBLE", "FILE", "CSSFAB", "present",
+                report.add(NeiFinding.warn("CSSFAB-VENDOR-PREAMBLE", desWhere, "CSSFAB", "present",
                         "a registered CSSFAB body",
                         "a legacy preamble precedes the registered layout"));
             }
@@ -309,14 +313,14 @@ public final class NeiValidator {
                 continue;
             }
             if (images.size() != 1) {
-                report.add(NeiFinding.info("CSSFAB-BANDS-UNCHECKED", "FILE", "CSSFAB.N_BANDS",
+                report.add(NeiFinding.info("CSSFAB-BANDS-UNCHECKED", desWhere, "CSSFAB.N_BANDS",
                         Integer.toString(cssfab),
                         images.size() + " image segments: cannot tell which one this DES describes"));
                 continue;
             }
             ImageFacts facts = images.get(0);
             if (cssfab != facts.numBands) {
-                report.add(NeiFinding.error("BANDS-VS-CSSFAB", "IMAGE " + facts.index,
+                report.add(NeiFinding.error("IMG-BANDS-VS-CSSFAB", "IMAGE " + facts.index,
                         "CSSFAB.N_BANDS", Integer.toString(cssfab),
                         "NBANDS " + facts.numBands,
                         "the focal-plane record describes a different band count"));
@@ -399,7 +403,7 @@ public final class NeiValidator {
     // ------------------------------------------------------------------- des
 
     private void checkDes(final NeiValidationReport report, final DataExtensionSegment des,
-            final int index, final List<NeiRecord> collected) {
+            final int index, final Map<NeiRecord, String> collected) {
         String id = des.getIdentifier().trim();
         String where = "DES " + index + " (" + id + ")";
         SecurityMetadata security = des.getSecurityMetadata();
@@ -409,7 +413,7 @@ public final class NeiValidator {
         }
         try {
             adapter.parse(des).ifPresent(record -> {
-                collected.add(record);
+                collected.put(record, where);
                 checkRecordLayout(report, where, record);
                 if ("CSEPHB".equals(record.getType())) {
                     describeEphemeris(report, where, record);
@@ -469,10 +473,26 @@ public final class NeiValidator {
                     "classification is required on every segment"));
         }
         if (trim(security.getSecurityClassificationSystem()).isEmpty()) {
-            report.add(NeiFinding.error(systemCode, where, systemField, "",
-                    "'" + EXPECTED_CLAS_SYSTEM + "'",
-                    "the classification system must name the owning authority"));
+            // MIL-STD-2500C lets an all-spaces system mean "no system applies", so a
+            // blank is legal on an unclassified segment and a defect only on a
+            // classified one, where the marking is meaningless without its authority.
+            if (isClassified(security)) {
+                report.add(NeiFinding.error(systemCode, where, systemField, "",
+                        "'" + EXPECTED_CLAS_SYSTEM + "'",
+                        "a classified segment must name the owning authority"));
+            } else {
+                report.add(NeiFinding.warn(systemCode, where, systemField, "",
+                        "'" + EXPECTED_CLAS_SYSTEM + "'",
+                        "legal when unclassified, but NEI products are expected to name it"));
+            }
         }
+    }
+
+    private static boolean isClassified(final SecurityMetadata security) {
+        SecurityClassification classification = security.getSecurityClassification();
+        return classification != null
+                && classification != SecurityClassification.UNKNOWN
+                && classification != SecurityClassification.UNCLASSIFIED;
     }
 
     private static boolean isBlankClassification(final SecurityMetadata security) {
