@@ -41,7 +41,7 @@ public final class NeiValidate {
                     return;
                 default:
                     if (argument.startsWith("--")) {
-                        System.err.println("neivalidator: unexpected argument: " + argument);
+                        System.err.println("nei-validator: unexpected argument: " + argument);
                         usage();
                         System.exit(2);
                     }
@@ -58,7 +58,7 @@ public final class NeiValidate {
         for (String path : paths) {
             File file = new File(path);
             if (!file.isFile()) {
-                System.err.println("neivalidator: cannot open '" + path + "'");
+                System.err.println("nei-validator: cannot open '" + path + "'");
                 exit = Math.max(exit, 3);
                 continue;
             }
@@ -66,7 +66,7 @@ public final class NeiValidate {
             try {
                 report = new NeiValidator().validate(file);
             } catch (Exception e) {
-                System.err.println("neivalidator: " + file + ": " + e.getMessage());
+                System.err.println("nei-validator: " + file + ": " + e.getMessage());
                 exit = Math.max(exit, 3);
                 continue;
             }
@@ -192,7 +192,7 @@ public final class NeiValidate {
     }
 
     private static void usage() {
-        System.err.println("usage: neivalidator <file.ntf>... "
+        System.err.println("usage: nei-validator <file.ntf>... "
                 + "[--json] [--errors-only] [--quiet] [--no-color]");
         System.err.println();
         System.err.println("Reports conformance and internal-consistency defects using only the");

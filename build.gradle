@@ -44,28 +44,33 @@ dependencies {
 
 /*
  * Two command-line entry points share one distribution. The application plugin
- * generates a start script only for `mainClass`, so neivalidator gets its own
+ * generates a start script only for `mainClass`, so nei-validator gets its own
  * CreateStartScripts task and is copied into the distribution's bin directory.
  * The classpath is declared lazily from the jar plus runtimeClasspath so the
  * generated script resolves lib/ the same way the primary one does.
  */
-def neivalidatorStartScripts = tasks.register('neivalidatorStartScripts', CreateStartScripts) {
+def neiValidatorStartScripts = tasks.register('neiValidatorStartScripts', CreateStartScripts) {
     mainClass = 'com.vantor.nitf.nei.NeiValidate'
-    applicationName = 'neivalidator'
-    outputDir = layout.buildDirectory.dir('neivalidator-scripts').get().asFile
+    applicationName = 'nei-validator'
+    outputDir = layout.buildDirectory.dir('nei-validator-scripts').get().asFile
     classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
 }
 
 application {
     mainClass = 'com.vantor.nitf.nei.NeiInfo'
+    applicationName = 'nei-info'
 
-    applicationDistribution.from(neivalidatorStartScripts) {
+    applicationDistribution.from(neiValidatorStartScripts) {
         into 'bin'
         filePermissions {
             unix(0755)
         }
     }
 }
+
+// applicationName would otherwise also name the distribution, and the
+// distribution holds both tools, so keep it named after the project.
+distributions.main.distributionBaseName = 'imaging-nitf-nei'
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
