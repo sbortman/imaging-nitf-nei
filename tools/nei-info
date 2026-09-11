@@ -9,4 +9,4 @@ if [[ $# -lt 1 ]]; then
 fi
 
 "$ROOT_DIR/gradlew" -q installDist
-exec "$ROOT_DIR/build/install/imaging-nitf-nei/bin/imaging-nitf-nei" "$@"
+exec "$ROOT_DIR/build/install/imaging-nitf-nei/bin/nei-info" "$@"

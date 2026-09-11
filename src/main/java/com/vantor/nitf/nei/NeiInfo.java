@@ -31,7 +31,7 @@ public final class NeiInfo {
                     break;
                 default:
                     if (argument.startsWith("--") || path != null) {
-                        System.err.println("neiinfo: unexpected argument: " + argument);
+                        System.err.println("nei-info: unexpected argument: " + argument);
                         usage();
                         System.exit(2);
                     }
@@ -44,7 +44,7 @@ public final class NeiInfo {
         }
         File file = new File(path);
         if (!file.isFile()) {
-            System.err.println("neiinfo: cannot open '" + path + "'");
+            System.err.println("nei-info: cannot open '" + path + "'");
             System.exit(1);
         }
         NeiScanReport report = new NeiNitfAdapter().scanReport(file);
@@ -85,6 +85,6 @@ public final class NeiInfo {
     }
 
     private static void usage() {
-        System.err.println("usage: neiinfo <file.ntf> [--json] [--no-tres] [--no-color]");
+        System.err.println("usage: nei-info <file.ntf> [--json] [--no-tres] [--no-color]");
     }
 }
