@@ -9,8 +9,26 @@ version = '0.1.0-SNAPSHOT'
 
 ext {
     imagingNitfVersion = '0.10'
+    // Must match the slf4j-api that imaging-nitf pulls in, so slf4j-nop
+    // binds to it instead of dragging in a newer API.
+    slf4jVersion = '1.7.30'
     spockVersion = '2.4-groovy-4.0'
     junitPlatformVersion = '1.14.1'
+}
+
+/*
+ * Dependencies only the command-line tools need. They stay off
+ * runtimeClasspath so the library does not force a logging backend on
+ * applications that embed it; the tools get one so SLF4J stays quiet.
+ * Non-transitive: the binding's only dependency is slf4j-api, which
+ * runtimeClasspath already carries, and copying it twice into lib/ fails.
+ */
+configurations {
+    cliRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
 }
 
 repositories {
@@ -38,6 +56,8 @@ dependencies {
     // Released, unmodified upstream artifacts.
     api "org.codice.imaging.nitf:codice-imaging-nitf-fluent:${imagingNitfVersion}"
 
+    cliRuntime "org.slf4j:slf4j-nop:${slf4jVersion}"
+
     testImplementation "org.spockframework:spock-core:${spockVersion}"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:${junitPlatformVersion}"
 }
@@ -46,14 +66,24 @@ dependencies {
  * Two command-line entry points share one distribution. The application plugin
  * generates a start script only for `mainClass`, so nei-validator gets its own
  * CreateStartScripts task and is copied into the distribution's bin directory.
- * The classpath is declared lazily from the jar plus runtimeClasspath so the
- * generated script resolves lib/ the same way the primary one does.
+ * Both scripts declare the same classpath lazily: the jar, runtimeClasspath,
+ * and the CLI-only extras, so they resolve lib/ identically.
  */
+def cliClasspath = files(tasks.named('jar'), configurations.runtimeClasspath, configurations.cliRuntime)
+
 def neiValidatorStartScripts = tasks.register('neiValidatorStartScripts', CreateStartScripts) {
     mainClass = 'com.vantor.nitf.nei.NeiValidate'
     applicationName = 'nei-validator'
     outputDir = layout.buildDirectory.dir('nei-validator-scripts').get().asFile
-    classpath = files(tasks.named('jar'), configurations.runtimeClasspath)
+    classpath = cliClasspath
+}
+
+tasks.named('startScripts') {
+    classpath = cliClasspath
+}
+
+tasks.named('run') {
+    classpath += configurations.cliRuntime
 }
 
 application {
@@ -65,6 +95,9 @@ application {
         filePermissions {
             unix(0755)
         }
+    }
+    applicationDistribution.from(configurations.cliRuntime) {
+        into 'lib'
     }
 }
 
