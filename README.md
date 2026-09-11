@@ -129,8 +129,13 @@ For example:
 ```
 
 The tool skips image pixels, parses image TRE headers, extracts DES payloads,
-and prints each NEI field. An SLF4J “no binding” warning is harmless unless the
-calling application wants logging; this project does not force a logging backend.
+and prints each NEI field.
+
+The command-line tools carry `slf4j-nop` so imaging-nitf's logging stays
+silent. That binding is on the tools' classpath only (the `cliRuntime`
+configuration in `build.gradle`), not the library's: an application that
+embeds the library chooses its own SLF4J backend, and sees SLF4J's "no
+binding" warning if it chooses none.
 
 ## nei-validator
 
