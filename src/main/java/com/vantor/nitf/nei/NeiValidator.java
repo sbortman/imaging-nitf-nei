@@ -319,6 +319,24 @@ public final class NeiValidator {
                 continue;
             }
             ImageFacts facts = images.get(0);
+            if (cssfab == 0) {
+                // 00000 is not "no bands", it is the sentinel for ALL of them.
+                // STDI-0002 Vol 2 App M (GLAS/GFM), N_BANDS: valid values are
+                // "00000 (all bands of AIS), or 00001 to 99999", and "If this
+                // DES is associated with all the bands in the associated image
+                // segment(s), N_BANDS = 0, and fields BAND_INDEXi, IREPBANDi,
+                // and ISUBCATi shall be omitted."
+                //
+                // So a single CSSFAB describing the whole image is CONFORMANT
+                // at 0, and the per-band loop being absent is required, not
+                // missing. This rule used to flag that as an error -- it was
+                // the last "defect" standing on every nei-test-suite product,
+                // and acting on it would have meant emitting a loop the spec
+                // says shall be omitted.
+                report.add(NeiFinding.info("CSSFAB-BANDS-ALL", desWhere, "CSSFAB.N_BANDS",
+                        "00000", "all bands of the associated image segment"));
+                continue;
+            }
             if (cssfab != facts.numBands) {
                 report.add(NeiFinding.error("IMG-BANDS-VS-CSSFAB", "IMAGE " + facts.index,
                         "CSSFAB.N_BANDS", Integer.toString(cssfab),
