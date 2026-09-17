@@ -130,4 +130,87 @@ class NeiValidatorSpec extends Specification {
         '\u0001'      || '"\\u0001"'   // control chars are escaped, never emitted raw
         ''            || '""'
     }
+
+    // ---------------------------------------------------------- frame rules
+
+    private static NeiRecord rec(String type, String field, String value) {
+        new NeiRecord(type, [(field): value], 0, 0)
+    }
+
+    private static NeiValidationReport frameReport(List<List> segments) {
+        // segments: [type, frameValue, desVersion]
+        def records = new LinkedHashMap<NeiRecord, String>()
+        def versions = new LinkedHashMap<NeiRecord, Integer>()
+        segments.eachWithIndex { seg, i ->
+            String field = seg[0] == 'CSATTB' ? 'ECI_ECF_ATT' : 'ECI_ECF_EPHEM'
+            def r = rec(seg[0] as String, field, seg[1] as String)
+            records[r] = "DES ${i + 1} (${seg[0]})".toString()
+            versions[r] = seg[2] as Integer
+        }
+        def report = new NeiValidationReport()
+        new NeiValidator().checkReferenceFrameAgreement(report, records, versions)
+        report
+    }
+
+    private static List codes(NeiValidationReport report) {
+        report.findings.collect { it.code }
+    }
+
+    def 'attitude and ephemeris in different frames is an error'() {
+        // The real shape of the regression: ossim lost CSATTB's ECI_ECF_ATT
+        // default, so attitude said ECI while ephemeris still said ECF. Both
+        // values are legal on their own, which is why no per-field check saw it.
+        given:
+        def report = frameReport([['CSEPHB', '1', 1], ['CSEPHB', '1', 1], ['CSATTB', '0', 1]])
+
+        expect:
+        'NEI-FRAME-DISAGREE' in codes(report)
+        report.hasErrors()
+
+        and: 'the finding names which segment said what, not just that they differ'
+        def f = report.findings.find { it.code == 'NEI-FRAME-DISAGREE' }
+        f.actual.contains('DES 3 (CSATTB) ECI_ECF_ATT=0 (ECI)')
+        f.actual.contains('ECI_ECF_EPHEM=1 (ECF)')
+    }
+
+    def 'agreement is reported as context, never as a defect'() {
+        given:
+        def report = frameReport([['CSEPHB', '1', 1], ['CSATTB', '1', 1]])
+
+        expect:
+        codes(report) == ['NEI-FRAME']
+        !report.hasErrors()
+    }
+
+    def 'ECI at DESVER 01 is unusable even when every segment agrees'() {
+        // App M: version 1 carries no ECI-to-ECF parameters, so a consumer
+        // cannot mensurate. Self-consistent, still broken -- the disagreement
+        // rule alone would pass this.
+        given:
+        def report = frameReport([['CSEPHB', '0', 1], ['CSATTB', '0', 1]])
+
+        expect:
+        codes(report).count { it == 'NEI-FRAME-ECI-UNUSABLE' } == 2
+        'NEI-FRAME-DISAGREE' !in codes(report)
+        report.hasErrors()
+    }
+
+    def 'ECI at DESVER 02 is allowed -- the transform parameters are present'() {
+        given:
+        def report = frameReport([['CSEPHB', '0', 2], ['CSATTB', '0', 2]])
+
+        expect:
+        codes(report) == ['NEI-FRAME']
+        !report.hasErrors()
+    }
+
+    def 'a blank frame flag is skipped rather than guessed at'() {
+        given:
+        def report = frameReport([['CSEPHB', '1', 1], ['CSATTB', '   ', 1]])
+
+        expect: 'the blank segment contributes nothing, so the rest still agree'
+        codes(report) == ['NEI-FRAME']
+        !report.hasErrors()
+    }
+
 }

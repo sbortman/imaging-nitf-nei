@@ -85,6 +85,7 @@ public final class NeiValidator {
         List<ImageFacts> images = new ArrayList<>();
         List<String> desIds = new ArrayList<>();
         Map<NeiRecord, String> desRecords = new LinkedHashMap<>();
+        Map<NeiRecord, Integer> desVersions = new LinkedHashMap<>();
         AtomicInteger imageIndex = new AtomicInteger();
         AtomicInteger desIndex = new AtomicInteger();
 
@@ -99,7 +100,7 @@ public final class NeiValidator {
                 flow.forEachDataExtensionSegment(des -> {
                     int index = desIndex.incrementAndGet();
                     desIds.add(des.getIdentifier().trim());
-                    checkDes(report, des, index, desRecords);
+                    checkDes(report, des, index, desRecords, desVersions);
                 });
             } finally {
                 flow.end();
@@ -113,6 +114,7 @@ public final class NeiValidator {
         }
         checkDesInventory(report, desIds);
         crossCheckDesAgainstImages(report, images, desRecords);
+        checkReferenceFrameAgreement(report, desRecords, desVersions);
         return report;
     }
 
@@ -421,7 +423,8 @@ public final class NeiValidator {
     // ------------------------------------------------------------------- des
 
     private void checkDes(final NeiValidationReport report, final DataExtensionSegment des,
-            final int index, final Map<NeiRecord, String> collected) {
+            final int index, final Map<NeiRecord, String> collected,
+            final Map<NeiRecord, Integer> versions) {
         String id = des.getIdentifier().trim();
         String where = "DES " + index + " (" + id + ")";
         SecurityMetadata security = des.getSecurityMetadata();
@@ -432,6 +435,7 @@ public final class NeiValidator {
         try {
             adapter.parse(des).ifPresent(record -> {
                 collected.put(record, where);
+                versions.put(record, des.getDESVersion());
                 checkRecordLayout(report, where, record);
                 if ("CSEPHB".equals(record.getType())) {
                     describeEphemeris(report, where, record);
@@ -467,6 +471,94 @@ public final class NeiValidator {
                     Integer.toString(count), ">= 2",
                     "a single ephemeris sample cannot describe motion"));
         }
+    }
+
+    /**
+     * Attitude and ephemeris must name the same reference frame, and an ECI
+     * frame must be one a consumer can actually use.
+     *
+     * <p>This is the only kind of defect a per-field validator structurally
+     * cannot see: {@code 0} is a legal value for {@code ECI_ECF_ATT} and
+     * {@code 1} is a legal value for {@code ECI_ECF_EPHEM}, so each field
+     * passes in isolation while the file as a whole says the satellite's
+     * attitude and its position are measured in different frames. That shipped
+     * in every product for six months and every check stayed green.
+     *
+     * <p>STDI-0002 Vol 2 App M, on both DESes in identical words: in version 1,
+     * if ECI is designated "no ECI-to-ECF transformation information is
+     * provided [...] and MSP cannot mensurate the dataset". So ECI at
+     * {@code DESVER 01} is not merely unusual, it disables the mensuration the
+     * rest of the metadata exists to support.
+     */
+    // Package-private so NeiValidatorSpec can drive it without a file.
+    void checkReferenceFrameAgreement(final NeiValidationReport report,
+            final Map<NeiRecord, String> desRecords,
+            final Map<NeiRecord, Integer> desVersions) {
+        Map<String, String> framesByWhere = new LinkedHashMap<>();
+
+        for (Map.Entry<NeiRecord, String> entry : desRecords.entrySet()) {
+            NeiRecord record = entry.getKey();
+            String where = entry.getValue();
+            String field = frameFieldFor(record.getType());
+            if (field == null) {
+                continue;
+            }
+            String frame = trim(record.get(field));
+            if (frame.isEmpty()) {
+                continue;
+            }
+            framesByWhere.put(where + " " + field, frame);
+
+            Integer version = desVersions.get(record);
+            if ("0".equals(frame) && version != null && version < 2) {
+                report.add(NeiFinding.error("NEI-FRAME-ECI-UNUSABLE", where, field,
+                        "0 (ECI) at DESVER " + String.format("%02d", version),
+                        "1 (ECF), or ECI at DESVER 02 with the 32 transform parameters",
+                        "STDI-0002 Vol 2 App M: in version 1 no ECI-to-ECF parameters are "
+                                + "present, so a consumer cannot mensurate the dataset"));
+            }
+        }
+
+        Set<String> distinct = new LinkedHashSet<>(framesByWhere.values());
+        if (distinct.size() > 1) {
+            StringBuilder detail = new StringBuilder();
+            for (Map.Entry<String, String> e : framesByWhere.entrySet()) {
+                if (detail.length() > 0) {
+                    detail.append(", ");
+                }
+                detail.append(e.getKey()).append('=').append(describeFrame(e.getValue()));
+            }
+            report.add(NeiFinding.error("NEI-FRAME-DISAGREE", "FILE", "ECI_ECF_*",
+                    detail.toString(), "every segment naming the same frame",
+                    "attitude and ephemeris describe the same pass and cannot be in "
+                            + "different reference frames"));
+        } else if (distinct.size() == 1) {
+            String frame = distinct.iterator().next();
+            report.add(NeiFinding.info("NEI-FRAME", "FILE", "ECI_ECF_*",
+                    describeFrame(frame),
+                    framesByWhere.size() + " segment(s) agree"));
+        }
+    }
+
+    /** The frame flag each GLAS-GFM DES spells differently. */
+    private static String frameFieldFor(final String type) {
+        if ("CSATTB".equals(type)) {
+            return "ECI_ECF_ATT";
+        }
+        if ("CSEPHB".equals(type)) {
+            return "ECI_ECF_EPHEM";
+        }
+        return null;
+    }
+
+    private static String describeFrame(final String value) {
+        if ("0".equals(value)) {
+            return "0 (ECI)";
+        }
+        if ("1".equals(value)) {
+            return "1 (ECF)";
+        }
+        return value;
     }
 
     private void checkDesInventory(final NeiValidationReport report, final List<String> ids) {
