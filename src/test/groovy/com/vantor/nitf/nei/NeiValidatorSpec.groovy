@@ -80,6 +80,63 @@ class NeiValidatorSpec extends Specification {
         report.byCode(NeiFinding.Severity.INFO) == ['I-ONE': 1]
     }
 
+    def 'IREPBAND values are classed against the standard set'() {
+        expect:
+        NeiValidator.irepbandClass(value) == klass
+
+        where:
+        value  || klass
+        ''     || 'standard'   // all BCS spaces, the default
+        '  '   || 'standard'
+        'M '   || 'standard'   // left-justified, space-filled to 2
+        'R'    || 'standard'
+        'G'    || 'standard'
+        'B'    || 'standard'
+        'LU'   || 'standard'
+        'Y'    || 'standard'
+        'Cb'   || 'standard'
+        'Cr'   || 'standard'
+        'LX'   || 'standard'   // location grids (GEOSDE)
+        'LY'   || 'standard'
+        'N'    || 'profile'    // near-IR: a producer profile extension, not the base set
+        '00'   || 'invalid'    // a band index is not a representation
+        '03'   || 'invalid'
+        'r'    || 'invalid'    // the field is case-sensitive: Cb and Cr are mixed case
+        'CB'   || 'invalid'
+        null   || 'standard'
+    }
+
+    def 'band representation findings: #label'() {
+        when:
+        def findings = NeiValidator.bandRepresentationFindings('IMAGE 1', irep, reps)
+
+        then:
+        findings.collect { "${it.severity}:${it.code}" as String }.sort() == expected.sort()
+
+        where:
+        label                              | irep    | reps                     || expected
+        'band index written as IREPBAND'   | 'MULTI' | ['00', '01', '02', '03'] || ['ERROR:IMG-IREPBAND-INVALID'] * 4 + ['WARN:IMG-MULTI-NO-RGB']
+        'B,G,R plus a profile N'           | 'MULTI' | ['B', 'G', 'R', 'N']     || ['INFO:IMG-IREPBAND-PROFILE']
+        'B,G,R with NIR left blank'        | 'MULTI' | ['B', 'G', 'R', '']      || []
+        'multiband naming no display band' | 'MULTI' | ['', '', '', '']         || ['WARN:IMG-MULTI-NO-RGB']
+        'fewer than three bands'           | 'MULTI' | ['', '']                 || []
+        'mono, correct'                    | 'MONO'  | ['M']                    || []
+        'mono, band index'                 | 'MONO'  | ['00']                   || ['ERROR:IMG-IREPBAND-INVALID']
+        'mono, blank'                      | 'MONO'  | ['']                     || ['WARN:IMG-IREPBAND-MONO']
+        'true colour'                      | 'RGB'   | ['R', 'G', 'B']          || []
+    }
+
+    def 'an invalid IREPBAND names the band and says why it matters'() {
+        when:
+        def f = NeiValidator.bandRepresentationFindings('IMAGE 1', 'MULTI', ['B', '01', 'R'])
+                .find { it.code == 'IMG-IREPBAND-INVALID' }
+
+        then:
+        f.field == 'IREPBAND002'
+        f.actual == '01'
+        f.toString().contains('R, G, B')
+    }
+
     def 'a report with no errors does not fail a run'() {
         given:
         def report = new NeiValidationReport()

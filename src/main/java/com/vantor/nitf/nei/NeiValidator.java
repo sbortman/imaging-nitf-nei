@@ -76,6 +76,8 @@ public final class NeiValidator {
         private String compression = "";
         private ImageCoordinatesRepresentation coordsRep;
         private ImageCoordinates coords;
+        private String irep = "";
+        private final List<String> bandReps = new ArrayList<>();
         private final Map<String, byte[]> rawTres = new LinkedHashMap<>();
         private final List<NeiRecord> records = new ArrayList<>();
     }
@@ -166,6 +168,12 @@ public final class NeiValidator {
                 : image.getImageCompression().name();
         facts.coordsRep = image.getImageCoordinatesRepresentation();
         facts.coords = image.getImageCoordinates();
+        facts.irep = image.getImageRepresentation() == null ? ""
+                : trim(image.getImageRepresentation().getTextEquivalent());
+        for (int b = 0; b < facts.numBands; b++) {
+            facts.bandReps.add(image.getImageBandZeroBase(b) == null ? ""
+                    : image.getImageBandZeroBase(b).getImageRepresentation());
+        }
 
         for (Tre tre : image.getTREsRawStructure().getTREs()) {
             byte[] raw = tre.getRawData();
@@ -202,6 +210,7 @@ public final class NeiValidator {
         checkCoordinates(report, facts, where);
         checkBlocking(report, facts, where);
         checkBandAgreement(report, facts, where);
+        bandRepresentationFindings(where, facts.irep, facts.bandReps).forEach(report::add);
 
         for (NeiRecord record : facts.records) {
             checkRecordLayout(report, where, record);
@@ -608,6 +617,74 @@ public final class NeiValidator {
     private static boolean isBlankClassification(final SecurityMetadata security) {
         SecurityClassification classification = security.getSecurityClassification();
         return classification == null || classification == SecurityClassification.UNKNOWN;
+    }
+
+    /**
+     * The IREPBANDn values a NITF 2.1 image may carry, restated in STDI-0002 Vol 1
+     * App AR (BCHIPA, IREPBAND_ORIGn): LU, R, G, B, M, Y, Cb, Cr or all spaces;
+     * LX and LY are the location-grid values from App P (GEOSDE). The field is
+     * case-sensitive -- Cb and Cr are mixed case.
+     */
+    private static final Set<String> STANDARD_IREPBAND = new HashSet<>(Arrays.asList(
+            "", "LU", "R", "G", "B", "M", "Y", "Cb", "Cr", "LX", "LY"));
+
+    /**
+     * Values outside the standard set that a producer profile defines. "N" (near-IR)
+     * is used by at least one commercial producer's NITF profile for the NIR band of
+     * a 4-band product, where the base set would leave it blank. Reported as INFO so
+     * a profile-conformant file is not failed and a reader can still see the
+     * deviation.
+     */
+    private static final Set<String> PROFILE_IREPBAND = new HashSet<>(Arrays.asList("N"));
+
+    /** "standard", "profile" or "invalid" for one IREPBANDn value. */
+    static String irepbandClass(final String value) {
+        String v = value == null ? "" : value.trim();
+        if (STANDARD_IREPBAND.contains(v)) {
+            return "standard";
+        }
+        return PROFILE_IREPBAND.contains(v) ? "profile" : "invalid";
+    }
+
+    /**
+     * IREPBANDn is what a reader uses to find the display bands: a viewer asked for
+     * three-band output looks for R, G and B here and, finding none, falls back to
+     * bands 1,2,3 -- which on a multispectral image ordered by wavelength puts blue
+     * in the red channel. A band INDEX in this field ("00", "01", ...) is invalid
+     * under every IREP and leaves the reader nothing to find.
+     *
+     * <p>IREP=MONO with a band other than "M" is a WARN rather than an ERROR: it is
+     * the convention every producer we have seen follows, but the requirement has
+     * not been confirmed against MIL-STD-2500C itself.
+     */
+    static List<NeiFinding> bandRepresentationFindings(final String where, final String irep,
+            final List<String> bandReps) {
+        List<NeiFinding> out = new ArrayList<>();
+        boolean anyRgb = false;
+        for (int i = 0; i < bandReps.size(); i++) {
+            String value = trim(bandReps.get(i));
+            String field = String.format("IREPBAND%03d", i + 1);
+            String klass = irepbandClass(value);
+            if ("invalid".equals(klass)) {
+                out.add(NeiFinding.error("IMG-IREPBAND-INVALID", where, field, value,
+                        "one of LU, R, G, B, M, Y, Cb, Cr, LX, LY or spaces",
+                        "not a band representation; a reader looking for R, G, B here "
+                                + "finds nothing and falls back to bands 1,2,3"));
+            } else if ("profile".equals(klass)) {
+                out.add(NeiFinding.info("IMG-IREPBAND-PROFILE", where, field, value,
+                        "a producer-profile value outside the standard set"));
+            } else if ("MONO".equals(irep) && !"M".equals(value)) {
+                out.add(NeiFinding.warn("IMG-IREPBAND-MONO", where, field, value, "M",
+                        "IREP is MONO; its band is conventionally represented as M"));
+            }
+            anyRgb |= "R".equals(value) || "G".equals(value) || "B".equals(value);
+        }
+        if ("MULTI".equals(irep) && bandReps.size() >= 3 && !anyRgb) {
+            out.add(NeiFinding.warn("IMG-MULTI-NO-RGB", where, "IREPBANDn",
+                    "no R, G or B in " + bandReps.size() + " bands", "R, G and B on the display bands",
+                    "legal, but three-band display will fall back to bands 1,2,3"));
+        }
+        return out;
     }
 
     /** True for a field filled with hyphens or spaces, which some writers use for "unset". */
