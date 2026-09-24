@@ -161,6 +161,12 @@ whose sources are long gone. The trade-off is what it can therefore check:
   and `CSSFAB.N_BANDS` against the image's own band count, the block grid
   against the declared size, `ICORDS` declaring a system while `IGEOLO` is
   blank);
+- **band representation** -- an `IREPBANDn` outside the standard set
+  (`LU R G B M Y Cb Cr`, `LX LY`, or spaces) is an ERROR: a band index there
+  (`00`, `01`, ...) leaves a reader nothing to find R, G and B by, so
+  three-band display falls back to bands 1,2,3. A `MULTI` image of three or
+  more bands naming none of R, G, B is a WARN, as is a `MONO` band other than
+  `M`. A producer-profile value such as near-IR `N` is INFO;
 - **layout** -- a TRE or DES whose parse stops short of its payload.
 
 It cannot check whether a *populated* value is the *correct* value. Comparing
