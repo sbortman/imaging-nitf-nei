@@ -8,5 +8,5 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
-"$ROOT_DIR/gradlew" -q installDist
+"$ROOT_DIR/gradlew" -q -p "$ROOT_DIR" installDist
 exec "$ROOT_DIR/build/install/imaging-nitf-nei/bin/nei-validator" "$@"
