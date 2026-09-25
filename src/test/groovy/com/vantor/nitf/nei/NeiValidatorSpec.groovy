@@ -270,4 +270,99 @@ class NeiValidatorSpec extends Specification {
         !report.hasErrors()
     }
 
+    // ---- ICHIPB grid convention ------------------------------------------
+
+    /** A 224-byte ICHIPB: a 512 x 512 chip at (row 30000, col 20000) of a 50000 x 40000 parent. */
+    private static byte[] ichipb(double op, double fi = op, String scale = '0001.00000') {
+        def c = { double v -> String.format('%012.3f', v) }
+        def opGrid = [[0, 0], [0, 511], [511, 0], [511, 511]]
+        def body = opGrid.collect { c(it[0] + op) + c(it[1] + op) }.join('') +
+                opGrid.collect { c(30000 + it[0] + fi) + c(20000 + it[1] + fi) }.join('')
+        ('00' + scale + '00' + '00' + body + '00050000' + '00040000').getBytes('US-ASCII')
+    }
+
+    def 'ICHIPB grid: #label'() {
+        expect:
+        NeiValidator.ichipbGridFindings('IMAGE 1', raw).collect { "${it.severity}:${it.code}" as String } == expected
+
+        where:
+        label                               | raw                              || expected
+        'pixel centres (App B)'             | ichipb(0.5)                      || []
+        'integer corners'                   | ichipb(0.0)                      || ['WARN:ICHIPB-GRID-CORNERS']
+        'OP centres, FI corners'            | ichipb(0.5, 0.0)                 || ['ERROR:ICHIPB-GRID-MIXED']
+        'OP corners, FI centres'            | ichipb(0.0, 0.5)                 || ['WARN:ICHIPB-GRID-CORNERS', 'ERROR:ICHIPB-GRID-MIXED']
+        'origin neither centre nor corner'  | ichipb(0.25)                     || ['WARN:ICHIPB-GRID-ORIGIN']
+        'resampled chip: mixed not judged'  | ichipb(0.5, 0.0, '0002.00000')   || []
+        'truncated'                         | new byte[100]                    || ['ERROR:ICHIPB-SHORT']
+        'absent'                            | null                             || []
+    }
+
+    def 'ICHIPB FI_COL gives the parent width a chip CSSFAB is measured against'() {
+        expect:
+        NeiValidator.ichipbParentCols(ichipb(0.5)) == 40000L
+        NeiValidator.ichipbParentCols(null) == null
+    }
+
+    // ---- CSSFAB field-alignment grid --------------------------------------
+
+    /**
+     * A GLAS pair list: n overlapping segments along X, each running toward -X;
+     * `reversed` lists the 1-based pairs written backwards.
+     */
+    private static Map<String, String> cssfab(int n, double delta, List<Integer> reversed = [],
+            String sensor = 'S') {
+        Map<String, String> f = [SENSOR_TYPE: sensor, NUM_FA_PAIRS: n.toString(), SMPL_NUM_FIRST: '0',
+                                 DELTA_SMPL_PAIRS: delta.toString()]
+        (0..<n).each { i ->
+            // 0.0206 m segments stepping 0.02 m: adjacent segments overlap, as real
+            // DSAs do, so a mirrored one also starts behind the next.
+            double s = 0.10 - 0.02 * i, e = s - 0.0206
+            if ((i + 1) in reversed) { def t = s; s = e; e = t }
+            String p = 'FIELD_ALIGNMENT[' + i + '].'
+            f[p + 'START_FALIGN_X'] = s.toString(); f[p + 'END_FALIGN_X'] = e.toString()
+            f[p + 'START_FALIGN_Y'] = '-0.01'; f[p + 'END_FALIGN_Y'] = '-0.01'
+        }
+        f
+    }
+
+    def 'CSSFAB pairs: #label'() {
+        expect:
+        NeiValidator.cssfabPairFindings('DES 5 (CSSFAB)', fields, width, 'NCOLS')
+                .collect { "${it.severity}:${it.code}" as String } == expected
+
+        where:
+        label                                    | fields                          | width || expected
+        'grid at the stitched spacing'           | cssfab(12, 500)                 | 6000  || []
+        'grid at the full segment width'         | cssfab(12, 515)                 | 6000  || ['WARN:CSSFAB-PAIRS-OVERRUN']
+        'last pair past a chip-sized width'      | cssfab(12, 515)                 | 128   || ['ERROR:CSSFAB-PAIRS-PAST-IMAGE']
+        'grid more than a spacing short'         | cssfab(10, 500)                 | 6000  || ['WARN:CSSFAB-PAIRS-SHORT']
+        'alternate segments mirror-image'        | cssfab(12, 500, [2, 4, 6])      | 6000  || ['WARN:CSSFAB-FALIGN-REVERSED', 'WARN:CSSFAB-FALIGN-OUT-OF-ORDER']
+        'whole array reversed is still ordered'  | reversedArray()                 | 6000  || []
+        'frame sensor: not a GLAS grid'          | cssfab(12, 515, [], 'F')        | 6000  || []
+        'width unknown: grid not judged'         | cssfab(12, 515)                 | 0     || []
+    }
+
+    /** Every pair and every step running in INCREASING x: a reverse scan, legitimately. */
+    private static Map<String, String> reversedArray() {
+        def f = cssfab(12, 500)
+        def g = new LinkedHashMap<String, String>(f)
+        (0..<12).each { i ->
+            String src = 'FIELD_ALIGNMENT[' + (11 - i) + '].'
+            String dst = 'FIELD_ALIGNMENT[' + i + '].'
+            g[dst + 'START_FALIGN_X'] = f[src + 'END_FALIGN_X']
+            g[dst + 'END_FALIGN_X'] = f[src + 'START_FALIGN_X']
+        }
+        g
+    }
+
+    def 'a mirrored segment is named, with the count'() {
+        when:
+        def f = NeiValidator.cssfabPairFindings('DES 5', cssfab(12, 500, [2, 4]), 6000, 'NCOLS')
+                .find { it.code == 'CSSFAB-FALIGN-REVERSED' }
+
+        then:
+        f.actual == 'pair(s) [2, 4]'
+        f.toString().contains('2 of 12')
+    }
+
 }

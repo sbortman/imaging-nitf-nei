@@ -177,6 +177,9 @@ public final class NeiValidator {
 
         for (Tre tre : image.getTREsRawStructure().getTREs()) {
             byte[] raw = tre.getRawData();
+            if (raw == null && "ICHIPB".equals(tre.getName().trim())) {
+                raw = ichipbFromEntries(tre);
+            }
             if (raw != null) {
                 facts.rawTres.put(tre.getName().trim(), raw);
             }
@@ -211,6 +214,7 @@ public final class NeiValidator {
         checkBlocking(report, facts, where);
         checkBandAgreement(report, facts, where);
         bandRepresentationFindings(where, facts.irep, facts.bandReps).forEach(report::add);
+        ichipbGridFindings(where, facts.rawTres.get("ICHIPB")).forEach(report::add);
 
         for (NeiRecord record : facts.records) {
             checkRecordLayout(report, where, record);
@@ -318,6 +322,15 @@ public final class NeiValidator {
                 report.add(NeiFinding.warn("CSSFAB-VENDOR-PREAMBLE", desWhere, "CSSFAB", "present",
                         "a registered CSSFAB body",
                         "a legacy preamble precedes the registered layout"));
+            }
+            if (images.size() == 1) {
+                // A chip's CSSFAB describes the PARENT's columns; ICHIPB's FI_COL
+                // says how many that is. Only an unchipped image is its own width.
+                ImageFacts only = images.get(0);
+                Long parentCols = ichipbParentCols(only.rawTres.get("ICHIPB"));
+                cssfabPairFindings(desWhere, record.getFields(),
+                        parentCols != null ? parentCols : only.cols,
+                        parentCols != null ? "ICHIPB.FI_COL" : "NCOLS").forEach(report::add);
             }
             Integer cssfab = parseInt(record.get("N_BANDS"));
             if (cssfab == null) {
@@ -685,6 +698,233 @@ public final class NeiValidator {
                     "legal, but three-band display will fall back to bands 1,2,3"));
         }
         return out;
+    }
+
+    /** ICHIPB is fixed-width: 16 bytes of flags, 16 grid values of 12, FI_ROW and FI_COL of 8. */
+    private static final int ICHIPB_LENGTH = 224;
+    private static final double GRID_EPS = 1e-6;
+
+    /**
+     * ICHIPB's grid points sit at the CENTRES of the chip's corner pixels.
+     * STDI-0002 Vol 1 App B: the output product's first pixel is centred at
+     * (0.5, 0.5), and FI gives the same points in the full image, so FI - OP is
+     * the chip's offset. A writer that puts integer corner indices there (0, 0 and
+     * N-1) is half a pixel off for any reader that follows the standard -- WARN,
+     * because a reader that shares the writer's convention still lands right.
+     * OP and FI in DIFFERENT conventions cannot be right for anyone: at unit scale
+     * their difference must be a whole number of pixels -- ERROR.
+     */
+    static List<NeiFinding> ichipbGridFindings(final String where, final byte[] raw) {
+        List<NeiFinding> out = new ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        if (raw.length < ICHIPB_LENGTH) {
+            out.add(NeiFinding.error("ICHIPB-SHORT", where, "ICHIPB", raw.length + " bytes",
+                    ICHIPB_LENGTH + " bytes", "the fixed-width record is truncated"));
+            return out;
+        }
+        String text = ascii(raw, 0, ICHIPB_LENGTH);
+        double[] grid = new double[16];
+        for (int i = 0; i < 16; i++) {
+            Double v = parseDouble(text.substring(16 + 12 * i, 28 + 12 * i));
+            if (v == null) {
+                out.add(NeiFinding.error("ICHIPB-MALFORMED", where, "ICHIPB",
+                        text.substring(16 + 12 * i, 28 + 12 * i).trim(),
+                        "a number in grid field " + (i + 1), "the grid cannot be read"));
+                return out;
+            }
+            grid[i] = v;
+        }
+        double opRow = grid[0];
+        double opCol = grid[1];
+        String op11 = trimNumber(opRow) + "," + trimNumber(opCol);
+        if (near(opRow, 0.5) && near(opCol, 0.5)) {
+            // conformant
+        } else if (near(opRow, 0.0) && near(opCol, 0.0)) {
+            out.add(NeiFinding.warn("ICHIPB-GRID-CORNERS", where, "ICHIPB.OP_ROW_11,OP_COL_11",
+                    op11, "0.5,0.5 (the centre of the first pixel)",
+                    "integer corner indices; STDI-0002 Vol 1 App B puts each grid point at a "
+                            + "corner pixel's centre, so a conforming reader is half a pixel off"));
+        } else {
+            out.add(NeiFinding.warn("ICHIPB-GRID-ORIGIN", where, "ICHIPB.OP_ROW_11,OP_COL_11",
+                    op11, "0.5,0.5 (the centre of the first pixel)",
+                    "the chip's first grid point is not its first pixel"));
+        }
+        Double scale = parseDouble(text.substring(2, 12));
+        boolean unitScale = "00".equals(text.substring(0, 2)) && scale != null && near(scale, 1.0);
+        if (unitScale && (!near(frac(grid[8] - opRow), 0.0) || !near(frac(grid[9] - opCol), 0.0))) {
+            out.add(NeiFinding.error("ICHIPB-GRID-MIXED", where, "ICHIPB.FI_ROW_11,FI_COL_11",
+                    trimNumber(grid[8]) + "," + trimNumber(grid[9]),
+                    "the same fractional part as OP_11 (" + op11 + ")",
+                    "OP and FI use different pixel conventions; at SCALE_FACTOR 1 FI - OP is "
+                            + "the chip offset and must be whole pixels"));
+        }
+        return out;
+    }
+
+    private static final String[] ICHIPB_FIELDS = {"XFRM_FLAG", "SCALE_FACTOR", "ANAMRPH_CORR",
+        "SCANBLK_NUM", "OP_ROW_11", "OP_COL_11", "OP_ROW_12", "OP_COL_12", "OP_ROW_21",
+        "OP_COL_21", "OP_ROW_22", "OP_COL_22", "FI_ROW_11", "FI_COL_11", "FI_ROW_12",
+        "FI_COL_12", "FI_ROW_21", "FI_COL_21", "FI_ROW_22", "FI_COL_22", "FI_ROW", "FI_COL"};
+    private static final int[] ICHIPB_WIDTHS = {2, 10, 2, 2, 12, 12, 12, 12, 12, 12, 12, 12,
+        12, 12, 12, 12, 12, 12, 12, 12, 8, 8};
+
+    /**
+     * imaging-nitf parses ICHIPB itself and keeps no raw payload, so rebuild the
+     * fixed-width record from its named entries; the rule then reads one layout
+     * whichever way the TRE arrived. Null if any field is missing.
+     */
+    private static byte[] ichipbFromEntries(final Tre tre) {
+        StringBuilder text = new StringBuilder(ICHIPB_LENGTH);
+        try {
+            for (int i = 0; i < ICHIPB_FIELDS.length; i++) {
+                String v = tre.getFieldValue(ICHIPB_FIELDS[i]);
+                if (v == null) {
+                    return null;
+                }
+                text.append(String.format("%-" + ICHIPB_WIDTHS[i] + "." + ICHIPB_WIDTHS[i] + "s", v));
+            }
+        } catch (NitfFormatException e) {
+            return null;
+        }
+        return text.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    }
+
+    /** ICHIPB.FI_COL, the full image's column count, or null when there is no usable ICHIPB. */
+    static Long ichipbParentCols(final byte[] raw) {
+        if (raw == null || raw.length < ICHIPB_LENGTH) {
+            return null;
+        }
+        Integer cols = parseInt(ascii(raw, 216, 8));
+        return cols == null || cols <= 0 ? null : Long.valueOf(cols);
+    }
+
+    /**
+     * Two structural properties of a GLAS (SENSOR_TYPE S) field-alignment grid,
+     * checkable from the file alone.
+     *
+     * <p>Pair n starts at sample SMPL_NUM_FIRST + (n-1) * DELTA_SMPL_PAIRS, so the
+     * grid spans NUM_FA_PAIRS * DELTA_SMPL_PAIRS columns of the image it describes
+     * (the parent, for a chip). A last pair that starts past the image describes
+     * nothing -- ERROR. A grid that merely runs past the image, or stops more than
+     * a spacing short of it, is legal for an image that is not the whole array, so
+     * WARN: on a whole-array image it means DELTA_SMPL_PAIRS is not the segments'
+     * spacing in the image -- typically segment overlap the image trims, which puts
+     * columns in the wrong pair, worse toward the far edge.
+     *
+     * <p>The pairs are segments of one linear array, so along the array axis (the
+     * one with the larger extent) every pair must run the same way and each must
+     * start beyond the last. A pair running backwards is a segment described
+     * mirror-image, and one out of order is a segment in the wrong place -- WARN,
+     * since a producer's axis choice is not something this can know for certain.
+     */
+    static List<NeiFinding> cssfabPairFindings(final String where, final Map<String, String> f,
+            final long width, final String widthName) {
+        List<NeiFinding> out = new ArrayList<>();
+        if (!"S".equals(trim(f.get("SENSOR_TYPE")))) {
+            return out;
+        }
+        Integer n = parseInt(f.get("NUM_FA_PAIRS"));
+        Double first = parseDouble(f.get("SMPL_NUM_FIRST"));
+        Double delta = parseDouble(f.get("DELTA_SMPL_PAIRS"));
+        if (n == null || n < 1 || first == null || delta == null) {
+            return out;
+        }
+
+        if (width > 0 && delta > 0) {
+            double lastStart = first + (n - 1) * delta;
+            double end = first + n * delta;
+            String grid = "SMPL_NUM_FIRST " + trimNumber(first) + " + " + n + " x DELTA_SMPL_PAIRS "
+                    + trimNumber(delta);
+            if (lastStart >= width) {
+                out.add(NeiFinding.error("CSSFAB-PAIRS-PAST-IMAGE", where, "CSSFAB.DELTA_SMPL_PAIRS",
+                        "last pair starts at column " + trimNumber(lastStart),
+                        "< " + widthName + " " + width,
+                        grid + ": the last field-alignment pair describes no column of the image"));
+            } else if (end > width) {
+                out.add(NeiFinding.warn("CSSFAB-PAIRS-OVERRUN", where, "CSSFAB.DELTA_SMPL_PAIRS",
+                        "grid ends at column " + trimNumber(end), "<= " + widthName + " " + width,
+                        grid + " runs " + trimNumber(end - width) + " columns past the image; on "
+                                + "a whole-array image DELTA_SMPL_PAIRS is wider than the segments' "
+                                + "spacing in it (overlap the image trims?)"));
+            } else if (end + delta < width) {
+                out.add(NeiFinding.warn("CSSFAB-PAIRS-SHORT", where, "CSSFAB.DELTA_SMPL_PAIRS",
+                        "grid ends at column " + trimNumber(end),
+                        "within one spacing of " + widthName + " " + width,
+                        grid + " leaves " + trimNumber(width - end) + " columns past its last "
+                                + "pair; on a whole-array image a pair is missing or the spacing "
+                                + "is too narrow"));
+            }
+        }
+
+        double[][] pairs = new double[n][4];   // start x, start y, end x, end y
+        for (int i = 0; i < n; i++) {
+            String p = "FIELD_ALIGNMENT[" + i + "].";
+            String[] names = {"START_FALIGN_X", "START_FALIGN_Y", "END_FALIGN_X", "END_FALIGN_Y"};
+            for (int k = 0; k < 4; k++) {
+                Double v = parseDouble(f.get(p + names[k]));
+                if (v == null) {
+                    return out;
+                }
+                pairs[i][k] = v;
+            }
+        }
+        double extentX = 0;
+        double extentY = 0;
+        for (double[] pr : pairs) {
+            extentX += Math.abs(pr[2] - pr[0]);
+            extentY += Math.abs(pr[3] - pr[1]);
+        }
+        int axis = extentX >= extentY ? 0 : 1;
+        String axisName = axis == 0 ? "X" : "Y";
+        double sign = Math.signum(pairs[0][axis + 2] - pairs[0][axis]);
+        if (sign == 0 || n < 2) {
+            return out;
+        }
+        List<Integer> backwards = new ArrayList<>();
+        List<Integer> outOfOrder = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (sign * (pairs[i][axis + 2] - pairs[i][axis]) <= 0) {
+                backwards.add(i + 1);
+            }
+            if (i > 0 && sign * (pairs[i][axis] - pairs[i - 1][axis]) <= 0) {
+                outOfOrder.add(i + 1);
+            }
+        }
+        if (!backwards.isEmpty()) {
+            out.add(NeiFinding.warn("CSSFAB-FALIGN-REVERSED", where, "CSSFAB.FALIGN_" + axisName,
+                    "pair(s) " + backwards, "every pair running the way pair 1 does",
+                    backwards.size() + " of " + n + " segments are described mirror-image along "
+                            + "the array"));
+        }
+        if (!outOfOrder.isEmpty()) {
+            out.add(NeiFinding.warn("CSSFAB-FALIGN-OUT-OF-ORDER", where, "CSSFAB.START_FALIGN_" + axisName,
+                    "pair(s) " + outOfOrder, "each pair starting beyond the one before it",
+                    "the segments do not step across the array in one direction"));
+        }
+        return out;
+    }
+
+    private static boolean near(final double a, final double b) {
+        return Math.abs(a - b) < GRID_EPS;
+    }
+
+    /** Distance to the nearest whole number, so -0.0000001 and 0.9999999 both read as 0. */
+    private static double frac(final double v) {
+        return Math.abs(v - Math.rint(v));
+    }
+
+    private static String trimNumber(final double v) {
+        return v == Math.rint(v) ? Long.toString((long) v) : Double.toString(v);
+    }
+
+    private static String ascii(final byte[] raw, final int offset, final int length) {
+        StringBuilder text = new StringBuilder(length);
+        for (int i = offset; i < offset + length; i++) {
+            text.append((char) (raw[i] & 0xFF));
+        }
+        return text.toString();
     }
 
     /** True for a field filled with hyphens or spaces, which some writers use for "unset". */
