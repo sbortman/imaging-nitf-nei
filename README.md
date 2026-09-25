@@ -167,6 +167,21 @@ whose sources are long gone. The trade-off is what it can therefore check:
   three-band display falls back to bands 1,2,3. A `MULTI` image of three or
   more bands naming none of R, G, B is a WARN, as is a `MONO` band other than
   `M`. A producer-profile value such as near-IR `N` is INFO;
+- **chip grid** -- ICHIPB grid points belong at the centres of the chip's
+  corner pixels (STDI-0002 Vol 1 App B: the first pixel is centred at 0.5,
+  0.5). Integer corner indices are a WARN: half a pixel off for a reader that
+  follows the standard. OP and FI in different conventions at unit scale are
+  an ERROR, since FI - OP, the chip offset, must then be whole pixels;
+- **GLAS field alignment** (CSSFAB, `SENSOR_TYPE S`) -- the pair grid,
+  `SMPL_NUM_FIRST + NUM_FA_PAIRS x DELTA_SMPL_PAIRS`, measured against the
+  image it describes (for a chip, the parent's width from ICHIPB `FI_COL`). A
+  last pair starting past the image is an ERROR. A grid that runs past the
+  image, or stops more than one spacing short, is a WARN: on a whole-array
+  image it means `DELTA_SMPL_PAIRS` is not the segments' spacing in the image,
+  typically because the image trims segment overlap. Along the array axis
+  every pair must run the same way and start beyond the one before; a pair
+  running backwards (a segment described mirror-image) or out of order is a
+  WARN;
 - **layout** -- a TRE or DES whose parse stops short of its payload.
 
 It cannot check whether a *populated* value is the *correct* value. Comparing
