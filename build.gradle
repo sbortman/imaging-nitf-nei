@@ -2,6 +2,7 @@ plugins {
     id 'java-library'
     id 'groovy'
     id 'application'
+    id 'maven-publish'
 }
 
 group = 'com.vantor.nitf'
@@ -135,6 +136,12 @@ tasks.named('test') {
         systemProperty 'nei.regolden', 'true'
     }
 
+    // NitfMetadataSpec reads vendor samples from $OSSIM_DATA (or -PossimData); absent → those features skip
+    String ossimData = (findProperty('ossimData') ?: System.getenv('OSSIM_DATA'))
+    if (ossimData) {
+        systemProperty 'ossim.data', ossimData
+    }
+
     testLogging {
         events 'skipped', 'failed'
         exceptionFormat 'full'
@@ -144,5 +151,13 @@ tasks.named('test') {
 tasks.named('jar') {
     manifest {
         attributes('Automatic-Module-Name': 'com.vantor.nitf.nei')
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
     }
 }
