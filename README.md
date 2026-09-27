@@ -32,6 +32,22 @@ The result is an immutable `NeiRecord` containing a flat, insertion-ordered map.
 Nested fields use paths such as `EPHEM[0].EPHEM_X`, so applications do not need
 to depend on Codice's internal TRE implementation.
 
+## Header and TRE metadata
+
+`NitfMetadata.read(file)` returns every file-header, image-subheader and decoded TRE field
+as flat text maps (pixel data is never read):
+
+```java
+NitfMetadata metadata = NitfMetadata.read(new File("product.ntf"));
+metadata.fileFields().get("FSCLAS");                     // "U"
+metadata.imageSegments().get(0).get("STDIDC.MISSION");   // "GL20NA"
+metadata.flat().get("image0.IREP");                       // "RGB"
+```
+
+Loops appear as `NAME.LOOP[i].FIELD`, a repeated TRE as `NAME#2.FIELD`; blank values are omitted.
+TREs imaging-nitf does not decode (including the NEI extensions above) are left out; use
+`NeiNitfAdapter` for those.
+
 ## Prerequisites
 
 - JDK 11 or newer
