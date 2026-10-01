@@ -161,3 +161,30 @@ publishing {
         }
     }
 }
+
+// Publish to a GitLab project's Maven registry (D6 / open-items "Publish imaging-nitf-nei"):
+//   ./gradlew publishAllPublicationsToGitlabRepository \
+//       -PgitlabMavenUrl=https://<gitlab-host>/api/v4/projects/<project-id>/packages/maven
+// with GITLAB_TOKEN (a personal or deploy token with the api scope) or, in CI, CI_JOB_TOKEN in the environment.
+// A file: URL needs no token (used to test the publication).
+String gitlabMavenUrl = providers.gradleProperty('gitlabMavenUrl').getOrNull()
+if (gitlabMavenUrl) {
+    publishing.repositories {
+        maven {
+            name = 'gitlab'
+            url = uri(gitlabMavenUrl)
+            if (url.scheme in ['http', 'https']) {
+                String jobToken = System.getenv('CI_JOB_TOKEN')
+                String token = jobToken ?: System.getenv('GITLAB_TOKEN')
+                if (!token) {
+                    throw new GradleException('Set GITLAB_TOKEN (or CI_JOB_TOKEN) to publish to ' + gitlabMavenUrl)
+                }
+                credentials(HttpHeaderCredentials) {
+                    name = jobToken ? 'Job-Token' : 'Private-Token'
+                    value = token
+                }
+                authentication { header(HttpHeaderAuthentication) }
+            }
+        }
+    }
+}
