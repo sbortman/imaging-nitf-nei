@@ -198,6 +198,23 @@ whose sources are long gone. The trade-off is what it can therefore check:
   every pair must run the same way and start beyond the one before; a pair
   running backwards (a segment described mirror-image) or out of order is a
   WARN;
+- **COMNEI dataset rules** (STDI-0006 Vol 4, the JBP and STDI-0002) -- everything
+  here is read from the file alone, and each is an ERROR:
+  - `HDR-CLEVEL-LOW`: `CLEVEL` below JBP Table G-1 for the image size (rows or
+    columns), the CCS extent and the file size. Band, segment and graphic limits are
+    not modelled, so this can only under-report. A *higher* `CLEVEL` is not a defect.
+  - `IMG-IXSOFL-NO-OVERFLOW-DES`: a non-zero `IXSOFL` that does not name a
+    `TRE_OVERFLOW` DES.
+  - `TEXT-LICENSE-MISSING`, `TEXT-CITATON-MISSING`: the license and citation text
+    segments Vol 4 3.1.9 requires (`README` is optional).
+  - `HISTOA-MISSING`, `HISTOA-TOO-SHORT`: HISTOA is required and its `CEL` is 115 to
+    83512 (STDI-0002 Vol 1 App L).
+  - `DES-NUMAIS-INVALID`, `DES-ASSOC-UUID-BLANK`, `DES-RESERVEDSUBH-LEN`,
+    `DES-SUBHEADER-MALFORMED`: the GLAS/GFM DES user-defined subheader (STDI-0002
+    Vol 2 App M): `NUMAIS` is `ALL` or 001-998, every declared `ASSOC_ELEM_UUIDn` is
+    filled, and `RESERVEDSUBH_LEN` is `0000`.
+  - `CSEXRB-FLAG-BLANK`, `CSEXRB-FLAG-INVALID`: `ATM_REFR_FLAG` and `VEL_ABER_FLAG`
+    are required and are `0` or `1`.
 - **layout** -- a TRE or DES whose parse stops short of its payload.
 
 It cannot check whether a *populated* value is the *correct* value. Comparing

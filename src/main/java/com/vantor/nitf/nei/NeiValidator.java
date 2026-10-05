@@ -23,6 +23,8 @@ import org.codice.imaging.nitf.core.impl.SlottedParseStrategy;
 import org.codice.imaging.nitf.core.security.SecurityClassification;
 import org.codice.imaging.nitf.core.security.SecurityMetadata;
 import org.codice.imaging.nitf.core.tre.Tre;
+import org.codice.imaging.nitf.core.tre.TreEntry;
+import org.codice.imaging.nitf.core.tre.TreGroup;
 import org.codice.imaging.nitf.fluent.NitfSegmentsFlow;
 import org.codice.imaging.nitf.fluent.impl.NitfParserInputFlowImpl;
 
@@ -77,8 +79,12 @@ public final class NeiValidator {
         private ImageCoordinatesRepresentation coordsRep;
         private ImageCoordinates coords;
         private String irep = "";
+        private int ixsofl;
+        private long ilocRow;
+        private long ilocCol;
         private final List<String> bandReps = new ArrayList<>();
         private final Map<String, byte[]> rawTres = new LinkedHashMap<>();
+        private final Map<String, Integer> treLengths = new LinkedHashMap<>();
         private final List<NeiRecord> records = new ArrayList<>();
     }
 
@@ -90,15 +96,21 @@ public final class NeiValidator {
         Map<NeiRecord, Integer> desVersions = new LinkedHashMap<>();
         AtomicInteger imageIndex = new AtomicInteger();
         AtomicInteger desIndex = new AtomicInteger();
+        AtomicInteger clevel = new AtomicInteger(-1);
+        List<String> textIds = new ArrayList<>();
 
         try (InputStream input = Nitf21BlankEncrypInputStream.open(file)) {
             NitfSegmentsFlow flow = new NitfParserInputFlowImpl()
                     .inputStream(input)
                     .build(new SlottedParseStrategy(SlottedParseStrategy.DES_DATA));
             try {
-                flow.fileHeader(header -> checkFileHeader(report, header));
+                flow.fileHeader(header -> {
+                    clevel.set(header.getComplexityLevel());
+                    checkFileHeader(report, header);
+                });
                 flow.forEachImageSegment(image ->
                         images.add(collectImage(report, image, imageIndex.incrementAndGet())));
+                flow.forEachTextSegment(text -> textIds.add(text.getIdentifier()));
                 flow.forEachDataExtensionSegment(des -> {
                     int index = desIndex.incrementAndGet();
                     desIds.add(des.getIdentifier().trim());
@@ -114,6 +126,11 @@ public final class NeiValidator {
         for (ImageFacts facts : images) {
             checkImage(report, facts);
         }
+        checkComplexityLevel(report, images, clevel.get(), file.length());
+        for (ImageFacts facts : images) {
+            ixsoflFindings("IMAGE " + facts.index, facts.ixsofl, desIds).forEach(report::add);
+        }
+        textSegmentFindings(textIds).forEach(report::add);
         checkDesInventory(report, desIds);
         crossCheckDesAgainstImages(report, images, desRecords);
         checkReferenceFrameAgreement(report, desRecords, desVersions);
@@ -166,6 +183,9 @@ public final class NeiValidator {
         facts.pixelsPerBlockV = image.getNumberOfPixelsPerBlockVertical();
         facts.compression = image.getImageCompression() == null ? ""
                 : image.getImageCompression().name();
+        facts.ixsofl = image.getExtendedHeaderDataOverflow();
+        facts.ilocRow = image.getImageLocationRow();
+        facts.ilocCol = image.getImageLocationColumn();
         facts.coordsRep = image.getImageCoordinatesRepresentation();
         facts.coords = image.getImageCoordinates();
         facts.irep = image.getImageRepresentation() == null ? ""
@@ -183,6 +203,8 @@ public final class NeiValidator {
             if (raw != null) {
                 facts.rawTres.put(tre.getName().trim(), raw);
             }
+            facts.treLengths.put(tre.getName().trim(),
+                    raw != null ? raw.length : decodedLength(tre.getEntries()));
             try {
                 adapter.parse(tre).ifPresent(facts.records::add);
             } catch (NeiFormatException e) {
@@ -215,6 +237,7 @@ public final class NeiValidator {
         checkBandAgreement(report, facts, where);
         bandRepresentationFindings(where, facts.irep, facts.bandReps).forEach(report::add);
         ichipbGridFindings(where, facts.rawTres.get("ICHIPB")).forEach(report::add);
+        histoaFindings(where, facts.treLengths.get("HISTOA")).forEach(report::add);
 
         for (NeiRecord record : facts.records) {
             checkRecordLayout(report, where, record);
@@ -387,6 +410,8 @@ public final class NeiValidator {
                     "CSEXRB.IMAGE_UUID", uuid, "a 36-character UUID",
                     "length is " + uuid.length()));
         }
+        csexrbFlagFindings(where, "ATM_REFR_FLAG", record.get("ATM_REFR_FLAG")).forEach(report::add);
+        csexrbFlagFindings(where, "VEL_ABER_FLAG", record.get("VEL_ABER_FLAG")).forEach(report::add);
         if (trim(record.get("SENSOR_ID")).isEmpty()) {
             report.add(NeiFinding.warn("CSEXRB-SENSOR-ID-BLANK", where, "CSEXRB.SENSOR_ID", "",
                     "PAN / MS / a sensor name", "consumers key processing off the sensor"));
@@ -453,6 +478,9 @@ public final class NeiValidator {
         if (security != null && isBlankClassification(security)) {
             report.add(NeiFinding.error("DES-DESCLAS-BLANK", where, "DESCLAS", "", "'U'",
                     "the DES subheader carries no classification"));
+        }
+        if (EXPECTED_DES.contains(id)) {
+            desSubheaderFindings(where, id, des.getUserDefinedSubheaderField()).forEach(report::add);
         }
         try {
             adapter.parse(des).ifPresent(record -> {
@@ -928,6 +956,246 @@ public final class NeiValidator {
     }
 
     /** True for a field filled with hyphens or spaces, which some writers use for "unset". */
+    // ------------------------------------------------------- conformance rules
+
+    /** JBP Table G-1 size limits: {limit, CLEVEL}. */
+    private static final long[][] CLEVEL_BY_IMAGE = {
+        {2048L, 3}, {8192L, 5}, {65536L, 6}, {99999999L, 7}};
+    private static final long[][] CLEVEL_BY_FILE = {
+        {52428799L, 3}, {1073741823L, 5}, {2147483647L, 6}, {10737418239L, 7}};
+
+    private static final int HISTOA_MIN_LENGTH = 115;
+
+    private static int clevelFor(final long value, final long[][] table) {
+        for (long[] row : table) {
+            if (value <= row[0]) {
+                return (int) row[1];
+            }
+        }
+        return 9;
+    }
+
+    /**
+     * The lowest CLEVEL whose size limits hold (JBP Table G-1, STI): the image's
+     * rows and columns, the CCS extent (the image plus its location offset), and
+     * the file size. Band count, segment counts and graphic size are not
+     * modelled, so this can only under-report the requirement.
+     */
+    static int requiredClevel(final long rows, final long cols, final long fileBytes,
+            final long ilocRow, final long ilocCol) {
+        int level = clevelFor(Math.max(rows, cols), CLEVEL_BY_IMAGE);
+        level = Math.max(level, clevelFor(Math.max(rows + ilocRow, cols + ilocCol),
+                CLEVEL_BY_IMAGE));
+        return Math.max(level, clevelFor(fileBytes, CLEVEL_BY_FILE));
+    }
+
+    /**
+     * A file is marked no lower than the highest CLEVEL feature it exceeds. A
+     * higher value than needed is not a defect, so only a value below the
+     * requirement is reported.
+     */
+    static List<NeiFinding> clevelFindings(final String where, final int clevel,
+            final long fileBytes, final long rows, final long cols, final long ilocRow,
+            final long ilocCol) {
+        List<NeiFinding> out = new ArrayList<>();
+        int need = requiredClevel(rows, cols, fileBytes, ilocRow, ilocCol);
+        if (clevel < need) {
+            out.add(NeiFinding.error("HDR-CLEVEL-LOW", where, "CLEVEL",
+                    String.format("%02d", clevel), String.format("%02d", need) + " or higher",
+                    "JBP Table G-1: " + rows + " rows x " + cols + " columns, " + fileBytes
+                            + " bytes needs CLEVEL " + String.format("%02d", need)));
+        }
+        return out;
+    }
+
+    private void checkComplexityLevel(final NeiValidationReport report,
+            final List<ImageFacts> images, final int clevel, final long fileBytes) {
+        if (clevel < 0 || images.isEmpty()) {
+            return;
+        }
+        long rows = 0;
+        long cols = 0;
+        long ilocRow = 0;
+        long ilocCol = 0;
+        for (ImageFacts facts : images) {
+            rows = Math.max(rows, facts.rows);
+            cols = Math.max(cols, facts.cols);
+            ilocRow = Math.max(ilocRow, facts.ilocRow);
+            ilocCol = Math.max(ilocCol, facts.ilocCol);
+        }
+        clevelFindings("FILE", clevel, fileBytes, rows, cols, ilocRow, ilocCol)
+                .forEach(report::add);
+    }
+
+    /**
+     * IXSOFL names the 1-based DES that holds this image's overflowed TREs. A
+     * non-zero value must therefore point at a TRE_OVERFLOW DES.
+     */
+    static List<NeiFinding> ixsoflFindings(final String where, final int ixsofl,
+            final List<String> desIds) {
+        List<NeiFinding> out = new ArrayList<>();
+        if (ixsofl <= 0) {
+            return out;
+        }
+        String target = ixsofl <= desIds.size() ? desIds.get(ixsofl - 1) : null;
+        if (!"TRE_OVERFLOW".equals(target)) {
+            out.add(NeiFinding.error("IMG-IXSOFL-NO-OVERFLOW-DES", where, "IXSOFL",
+                    String.format("%03d -> %s", ixsofl,
+                            target == null ? "no such DES" : target),
+                    "000, or the number of a TRE_OVERFLOW DES",
+                    "the image subheader claims overflowed TREs, but that DES is not a "
+                            + "TRE_OVERFLOW"));
+        }
+        return out;
+    }
+
+    /**
+     * STDI-0006 Vol 4 3.1.9 and 3.7: an EO COMNEI dataset contains a license text
+     * segment and a citation text segment (README is optional).
+     */
+    static List<NeiFinding> textSegmentFindings(final List<String> textIds) {
+        Set<String> ids = new HashSet<>();
+        for (String id : textIds) {
+            ids.add(trim(id));
+        }
+        List<NeiFinding> out = new ArrayList<>();
+        String found = ids.isEmpty() ? "no text segments" : String.join(", ", ids);
+        if (!ids.contains("LICENSE")) {
+            out.add(NeiFinding.error("TEXT-LICENSE-MISSING", "FILE", "TEXTID", found,
+                    "a text segment with TEXTID LICENSE",
+                    "STDI-0006 Vol 4 3.1.9 requires the license as a text segment"));
+        }
+        if (!ids.contains("CITATON")) {
+            out.add(NeiFinding.error("TEXT-CITATON-MISSING", "FILE", "TEXTID", found,
+                    "a text segment with TEXTID CITATON",
+                    "STDI-0006 Vol 4 3.1.9 requires a citation text segment"));
+        }
+        return out;
+    }
+
+    /**
+     * Bytes a decoded TRE occupied: Codice drops the raw payload once it decodes
+     * a TRE but keeps every fixed-width field untrimmed, so the widths add back up
+     * to the TRE's CEL (group repetitions included).
+     */
+    static int decodedLength(final List<TreEntry> entries) {
+        int total = 0;
+        for (TreEntry entry : entries) {
+            if (entry.hasGroups()) {
+                for (TreGroup group : entry.getGroups()) {
+                    total += decodedLength(group.getEntries());
+                }
+            } else if (entry.getFieldValue() != null) {
+                total += entry.getFieldValue().length();
+            }
+        }
+        return total;
+    }
+
+    /**
+     * HISTOA is required in the NEI subheader; its CEL is 00115 to 83512
+     * (STDI-0002 Vol 1 App L). {@code length} is the TRE's CEL, or null if absent.
+     */
+    static List<NeiFinding> histoaFindings(final String where, final Integer length) {
+        List<NeiFinding> out = new ArrayList<>();
+        if (length == null) {
+            out.add(NeiFinding.error("HISTOA-MISSING", where, "HISTOA", "absent", "present",
+                    "STDI-0006 Vol 4 requires HISTOA in the NEI subheader"));
+        } else if (length < HISTOA_MIN_LENGTH) {
+            out.add(NeiFinding.error("HISTOA-TOO-SHORT", where, "HISTOA.CEL",
+                    length + " bytes", ">= " + HISTOA_MIN_LENGTH + " bytes",
+                    "STDI-0002 Vol 1 App L: CEL is 00115 to 83512"));
+        }
+        return out;
+    }
+
+    /**
+     * The GLAS/GFM DES user-defined subheader (STDI-0002 Vol 2 App M): UUID (36),
+     * NUMAIS (3, "ALL" or 001-998), one AISDLVL (3) per associated image when
+     * NUMAIS is numeric, NUM_ASSOC_ELEM (3), that many ASSOC_ELEM_UUID (36), then
+     * RESERVEDSUBH_LEN (4, "0000" when nothing is reserved).
+     */
+    static List<NeiFinding> desSubheaderFindings(final String where, final String desId,
+            final String shf) {
+        List<NeiFinding> out = new ArrayList<>();
+        final int uuidLen = 36;
+        if (shf == null || shf.length() < uuidLen + 3 + 3 + 4) {
+            out.add(malformedDesSubheader(where, desId, shf == null ? 0 : shf.length(),
+                    "shorter than the minimum 46 bytes"));
+            return out;
+        }
+        int pos = uuidLen;
+        String numais = shf.substring(pos, pos + 3);
+        pos += 3;
+        boolean numeric = numais.matches("\\d{3}");
+        boolean validNumais = "ALL".equals(numais)
+                || (numeric && Integer.parseInt(numais) >= 1 && Integer.parseInt(numais) <= 998);
+        if (!validNumais) {
+            out.add(NeiFinding.error("DES-NUMAIS-INVALID", where, desId + ".NUMAIS",
+                    numais.trim().isEmpty() ? "(blank)" : numais, "ALL or 001-998",
+                    "STDI-0002 Vol 2 App M: NUMAIS is required"));
+        } else if (numeric) {
+            pos += 3 * Integer.parseInt(numais);
+        }
+        if (shf.length() < pos + 3) {
+            out.add(malformedDesSubheader(where, desId, shf.length(),
+                    "ends inside the NUMAIS display-level loop"));
+            return out;
+        }
+        String assoc = shf.substring(pos, pos + 3);
+        pos += 3;
+        if (!assoc.matches("\\d{3}")) {
+            out.add(malformedDesSubheader(where, desId, shf.length(),
+                    "NUM_ASSOC_ELEM is '" + assoc + "'"));
+            return out;
+        }
+        int count = Integer.parseInt(assoc);
+        if (shf.length() < pos + count * uuidLen + 4) {
+            out.add(malformedDesSubheader(where, desId, shf.length(),
+                    "NUM_ASSOC_ELEM is " + count + " but the subheader is too short for them"));
+            return out;
+        }
+        for (int j = 1; j <= count; j++) {
+            String uuid = shf.substring(pos, pos + uuidLen);
+            pos += uuidLen;
+            if (uuid.trim().isEmpty()) {
+                out.add(NeiFinding.error("DES-ASSOC-UUID-BLANK", where,
+                        "ASSOC_ELEM_UUID" + j, "(blank)", "a 36-character UUID",
+                        "NUM_ASSOC_ELEM claims " + count + " associated element(s); this one "
+                                + "is empty"));
+            }
+        }
+        String reserved = shf.substring(pos, pos + 4);
+        if (!"0000".equals(reserved)) {
+            out.add(NeiFinding.error("DES-RESERVEDSUBH-LEN", where, desId + ".RESERVEDSUBH_LEN",
+                    reserved.trim().isEmpty() ? "(blank)" : reserved, "0000",
+                    "STDI-0002 Vol 2 App M: the reserved subheader length shall be 0000"));
+        }
+        return out;
+    }
+
+    private static NeiFinding malformedDesSubheader(final String where, final String desId,
+            final int length, final String why) {
+        return NeiFinding.error("DES-SUBHEADER-MALFORMED", where, desId + " subheader",
+                length + " bytes", "UUID, NUMAIS, NUM_ASSOC_ELEM, UUIDs, RESERVEDSUBH_LEN",
+                why);
+    }
+
+    /** CSEXRB ATM_REFR_FLAG and VEL_ABER_FLAG are required, 0 or 1. */
+    static List<NeiFinding> csexrbFlagFindings(final String where, final String field,
+            final String value) {
+        List<NeiFinding> out = new ArrayList<>();
+        String v = trim(value);
+        if (v.isEmpty()) {
+            out.add(NeiFinding.error("CSEXRB-FLAG-BLANK", where, "CSEXRB." + field, "(blank)",
+                    "0 or 1", "the field is required"));
+        } else if (!"0".equals(v) && !"1".equals(v)) {
+            out.add(NeiFinding.error("CSEXRB-FLAG-INVALID", where, "CSEXRB." + field, v,
+                    "0 or 1", "the field is a one-digit flag"));
+        }
+        return out;
+    }
+
     static boolean isPlaceholder(final String value) {
         if (value.isEmpty()) {
             return true;
